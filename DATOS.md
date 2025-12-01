@@ -1,6 +1,6 @@
 # Documentacion de Recogida de Datos
 
-**Alumno:** ___________________
+**Alumno:** Gabriel Orlando Cruz Parraga
 
 ## Formato del CSV
 
