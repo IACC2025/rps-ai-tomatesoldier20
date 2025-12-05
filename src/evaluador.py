@@ -26,9 +26,9 @@ from modelo import JugadorIA, JUGADA_A_NUM, NUM_A_JUGADA, GANA_A
 
 # Mapeo de entrada a jugada
 ENTRADA_A_JUGADA = {
-    "1": "piedra", "2": "papel", "3": "tijera",
-    "p": "piedra", "a": "papel", "t": "tijera",
-    "piedra": "piedra", "papel": "papel", "tijera": "tijera"
+    "1": "r", "2": "p", "3": "s",
+    "p": "r", "a": "p", "t": "s",
+    "piedra": "r", "papel": "p", "tijera": "s"
 }
 
 
@@ -89,7 +89,7 @@ def leer_jugada_humano() -> str:
 
 def mostrar_ronda(ronda: int, jugada_ia: str, jugada_humano: str, resultado: str):
     """Muestra el resultado de una ronda."""
-    simbolos = {"piedra": "P", "papel": "A", "tijera": "T"}
+    simbolos = {"r": "Piedra", "p": "Papel", "s": "Tijera"}
 
     print(f"\n--- Ronda {ronda} ---")
     print(f"Tu: {simbolos[jugada_humano]} ({jugada_humano})")
@@ -161,7 +161,7 @@ def evaluar(num_rondas: int = 50):
         mostrar_ronda(ronda, jugada_ia, jugada_humano, resultado)
 
         # Registrar en el historial de la IA
-        ia.registrar_ronda(jugada_humano, jugada_ia)
+        ia.registrar(jugada_humano)
 
         # Actualizar contadores
         if resultado == "victoria":
