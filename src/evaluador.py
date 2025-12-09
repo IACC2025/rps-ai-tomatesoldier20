@@ -1,18 +1,17 @@
 """
-RPSAI - Evaluador de Winrate
-============================
+RPSAI - Evaluador de Winrate CORREGIDO
+=======================================
 
 Este script evalua el rendimiento de tu modelo de IA
 jugando partidas contra un humano y calculando el winrate.
 
-Uso:
-    python src/evaluador.py
+CORRECCIÓN CRÍTICA:
+- La IA decide ANTES de que el humano juegue
+- La IA predice la PRÓXIMA jugada del humano
+- El orden es correcto: IA predice → Humano juega → Comparar
 
-El evaluador:
-1. Carga tu modelo entrenado
-2. Juega N partidas contra un humano
-3. Calcula y muestra el winrate final
-4. Muestra la nota segun los criterios de evaluacion
+Uso:
+    python src/evaluador_corregido.py
 """
 
 import sys
@@ -92,8 +91,8 @@ def mostrar_ronda(ronda: int, jugada_ia: str, jugada_humano: str, resultado: str
     simbolos = {"r": "Piedra", "p": "Papel", "s": "Tijera"}
 
     print(f"\n--- Ronda {ronda} ---")
-    print(f"Tu: {simbolos[jugada_humano]} ({jugada_humano})")
-    print(f"IA: {simbolos[jugada_ia]} ({jugada_ia})")
+    print(f"IA predijo: {simbolos[jugada_ia]} ({jugada_ia})")
+    print(f"Tu jugaste: {simbolos[jugada_humano]} ({jugada_humano})")
 
     if resultado == "victoria":
         print(">>> IA GANA <<<")
@@ -118,16 +117,20 @@ def mostrar_progreso(victorias: int, derrotas: int, empates: int, total: int):
 
 def evaluar(num_rondas: int = 50):
     """
-    Ejecuta la evaluacion del modelo.
+    Ejecuta la evaluacion del modelo CORREGIDA.
 
     Args:
         num_rondas: Numero de rondas a jugar
     """
     print("="*60)
-    print("   RPSAI - EVALUACION DE WINRATE")
+    print("   RPSAI - EVALUACION DE WINRATE CORREGIDA")
     print("="*60)
     print(f"\nSe jugaran {num_rondas} rondas contra tu modelo de IA.")
     print("Juega de forma natural, como lo harias normalmente.\n")
+    print("ORDEN CORRECTO:")
+    print("  1. IA predice tu PRÓXIMA jugada")
+    print("  2. Tú juegas")
+    print("  3. Se compara predicción vs realidad\n")
 
     # Intentar cargar el modelo
     try:
@@ -135,7 +138,7 @@ def evaluar(num_rondas: int = 50):
         if ia.modelo is None:
             print("[!] ADVERTENCIA: No se cargo ningun modelo.")
             print("[!] La IA jugara de forma ALEATORIA.")
-            print("[!] Entrena tu modelo primero con: python src/modelo.py\n")
+            print("[!] Entrena tu modelo primero con: python src/modelo_mejorado_corregido.py\n")
     except Exception as e:
         print(f"[!] Error al cargar el modelo: {e}")
         print("[!] La IA jugara de forma ALEATORIA.\n")
@@ -148,20 +151,27 @@ def evaluar(num_rondas: int = 50):
     empates = 0
 
     for ronda in range(1, num_rondas + 1):
-        # La IA decide su jugada
+        # ============================================
+        # ORDEN CORREGIDO:
+        # 1. IA decide PRIMERO (predice tu próxima jugada)
+        # 2. Humano juega DESPUÉS
+        # 3. Se compara
+        # ============================================
+
+        # PASO 1: IA predice tu próxima jugada
         jugada_ia = ia.decidir_jugada()
 
-        # El humano juega
+        # PASO 2: Humano juega
         jugada_humano = leer_jugada_humano()
 
-        # Determinar resultado (desde perspectiva IA)
+        # PASO 3: Registrar la jugada del humano para futuras predicciones
+        ia.registrar(jugada_humano)
+
+        # PASO 4: Determinar resultado (desde perspectiva IA)
         resultado = obtener_resultado(jugada_ia, jugada_humano)
 
         # Mostrar resultado
         mostrar_ronda(ronda, jugada_ia, jugada_humano, resultado)
-
-        # Registrar en el historial de la IA
-        ia.registrar(jugada_humano)
 
         # Actualizar contadores
         if resultado == "victoria":

@@ -7,8 +7,7 @@ from collections import Counter, deque
 
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score, classification_report
-from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
-from sklearn.ensemble import VotingClassifier
+from sklearn.ensemble import RandomForestClassifier
 
 # ==========================
 # CONFIGURACIONES
@@ -83,16 +82,17 @@ def preparar_datos(df: pd.DataFrame) -> pd.DataFrame:
     df["Pierde_num"] = df["Comportamiento tras partida perdida"].apply(limpiar_comportamiento)
     df["Empata_num"] = df["Comportamiento tras partida empatada"].apply(limpiar_comportamiento)
 
-    df["proxima_jugada_j2"] = df["Cosmin_num"].shift(-1)
+    # CRÍTICO: Predecir la PRÓXIMA jugada de Cosmin
+    df["proxima_jugada_cosmin"] = df["Cosmin_num"].shift(-1)
 
-    df = df[df["proxima_jugada_j2"].notna()]
-    df["proxima_jugada_j2"] = df["proxima_jugada_j2"].astype(int)
+    df = df[df["proxima_jugada_cosmin"].notna()]
+    df["proxima_jugada_cosmin"] = df["proxima_jugada_cosmin"].astype(int)
 
     return df.reset_index(drop=True)
 
 
 # =============================================================================
-# PARTE 3 – FEATURE ENGINEERING MEJORADO
+# PARTE 3 – FEATURE ENGINEERING
 # =============================================================================
 
 def calcular_entropia(jugadas):
@@ -108,80 +108,22 @@ def calcular_entropia(jugadas):
     return entropia
 
 
-def detectar_racha_actual(jugadas, ventana=5):
-    if len(jugadas) < ventana:
-        return 0, 0
-
-    ultimas = jugadas[-ventana:]
-    if len(set(ultimas)) == 1:
-        jugada_racha = ultimas[0]
-        longitud = ventana
-        idx = len(jugadas) - ventana - 1
-        while idx >= 0 and jugadas[idx] == jugada_racha:
-            longitud += 1
-            idx -= 1
-        return longitud, jugada_racha
-    return 0, 0
-
-
 def crear_features(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
 
+    # Frecuencias acumuladas
     df["freq_r"] = (df["Cosmin_num"] == 0).expanding().mean()
     df["freq_p"] = (df["Cosmin_num"] == 1).expanding().mean()
     df["freq_s"] = (df["Cosmin_num"] == 2).expanding().mean()
 
-    for i in range(1, 8):
+    # Lags (últimas jugadas)
+    for i in range(1, 6):
         df[f"lag{i}"] = df["Cosmin_num"].shift(i)
 
-    df["freq_r_recent"] = df["Cosmin_num"].rolling(window=10, min_periods=1).apply(
-        lambda x: (x == 0).mean()
-    )
-    df["freq_p_recent"] = df["Cosmin_num"].rolling(window=10, min_periods=1).apply(
-        lambda x: (x == 1).mean()
-    )
-    df["freq_s_recent"] = df["Cosmin_num"].rolling(window=10, min_periods=1).apply(
-        lambda x: (x == 2).mean()
-    )
-
-    rachas_info = []
-    for idx in range(len(df)):
-        if idx < 5:
-            rachas_info.append((0, 0))
-        else:
-            jugadas_previas = df["Cosmin_num"].iloc[:idx + 1].tolist()
-            longitud, jugada = detectar_racha_actual(jugadas_previas, ventana=3)
-            rachas_info.append((longitud, jugada))
-
-    df["racha_longitud"] = [x[0] for x in rachas_info]
-    df["racha_jugada"] = [x[1] for x in rachas_info]
-
-    df["entropia_reciente"] = df["Cosmin_num"].rolling(window=10, min_periods=3).apply(
+    # Entropía móvil
+    df["entropia"] = df["Cosmin_num"].rolling(window=10, min_periods=3).apply(
         lambda x: calcular_entropia(x.tolist())
     )
-
-    df["tendencia_r"] = df["freq_r_recent"] - df["freq_r_recent"].shift(5)
-    df["tendencia_p"] = df["freq_p_recent"] - df["freq_p_recent"].shift(5)
-    df["tendencia_s"] = df["freq_s_recent"] - df["freq_s_recent"].shift(5)
-
-    df["alterna_rp"] = ((df["lag1"] == 0) & (df["lag2"] == 1) |
-                        (df["lag1"] == 1) & (df["lag2"] == 0)).astype(int)
-    df["alterna_rs"] = ((df["lag1"] == 0) & (df["lag2"] == 2) |
-                        (df["lag1"] == 2) & (df["lag2"] == 0)).astype(int)
-    df["alterna_ps"] = ((df["lag1"] == 1) & (df["lag2"] == 2) |
-                        (df["lag1"] == 2) & (df["lag2"] == 1)).astype(int)
-
-    df["diversidad_5"] = df["Cosmin_num"].rolling(window=5, min_periods=1).apply(
-        lambda x: len(set(x))
-    )
-
-    df["desv_equilibrio_r"] = (df["freq_r_recent"] - 0.333).abs()
-    df["desv_equilibrio_p"] = (df["freq_p_recent"] - 0.333).abs()
-    df["desv_equilibrio_s"] = (df["freq_s_recent"] - 0.333).abs()
-
-    df["diff_r"] = df["freq_r_recent"] - df["freq_r"]
-    df["diff_p"] = df["freq_p_recent"] - df["freq_p"]
-    df["diff_s"] = df["freq_s_recent"] - df["freq_s"]
 
     df = df.fillna(0)
     df = df.iloc[10:]
@@ -189,34 +131,23 @@ def crear_features(df: pd.DataFrame) -> pd.DataFrame:
     return df.reset_index(drop=True)
 
 
-# =============================================================================
-# PARTE 4 – SELECCIÓN DE FEATURES MEJORADA
-# =============================================================================
-
 def seleccionar_features(df: pd.DataFrame):
     features = [
         "Probabilidad de Piedra", "Probabilidad de Papel", "Probabilidad de Tijera",
         "freq_r", "freq_p", "freq_s",
-        "freq_r_recent", "freq_p_recent", "freq_s_recent",
-        "lag1", "lag2", "lag3", "lag4", "lag5", "lag6", "lag7",
+        "lag1", "lag2", "lag3", "lag4", "lag5",
         "Ultimo_num", "Gana_num", "Pierde_num", "Empata_num",
-        "racha_longitud", "racha_jugada",
-        "Entropia", "entropia_reciente",
-        "tendencia_r", "tendencia_p", "tendencia_s",
-        "alterna_rp", "alterna_rs", "alterna_ps",
-        "diversidad_5",
-        "desv_equilibrio_r", "desv_equilibrio_p", "desv_equilibrio_s",
-        "diff_r", "diff_p", "diff_s"
+        "Entropia", "entropia"
     ]
 
     X = df[features]
-    y = df["proxima_jugada_j2"].astype(int)
+    y = df["proxima_jugada_cosmin"].astype(int)
 
     return X, y
 
 
 # =============================================================================
-# PARTE 5 – ENTRENAMIENTO CON ENSEMBLE MEJORADO
+# PARTE 4 – ENTRENAMIENTO
 # =============================================================================
 
 def entrenar_modelo(X, y):
@@ -224,42 +155,22 @@ def entrenar_modelo(X, y):
         X, y, test_size=0.2, shuffle=True, random_state=42, stratify=y
     )
 
-    rf1 = RandomForestClassifier(
+    rf = RandomForestClassifier(
         n_estimators=500,
         max_depth=30,
-        min_samples_split=3,
-        min_samples_leaf=1,
-        random_state=42
-    )
-
-    rf2 = RandomForestClassifier(
-        n_estimators=500,
-        max_depth=35,
         min_samples_split=2,
         min_samples_leaf=1,
-        random_state=123
-    )
-
-    gb = GradientBoostingClassifier(
-        n_estimators=300,
-        max_depth=10,
-        learning_rate=0.08,
         random_state=42
     )
 
-    modelo = VotingClassifier(
-        estimators=[('rf1', rf1), ('rf2', rf2), ('gb', gb)],
-        voting='soft'
-    )
-
-    print("\nEntrenando modelo ensemble...")
-    modelo.fit(X_train, y_train)
-    pred = modelo.predict(X_test)
+    print("\nEntrenando modelo...")
+    rf.fit(X_train, y_train)
+    pred = rf.predict(X_test)
 
     print("\nAccuracy:", accuracy_score(y_test, pred))
     print(classification_report(y_test, pred, zero_division=0))
 
-    return modelo
+    return rf
 
 
 def guardar_modelo(modelo, ruta: str = None):
@@ -283,7 +194,7 @@ def cargar_modelo(ruta: str = None):
 
 
 # =============================================================================
-# PARTE 6 – IA ULTRA-ADAPTATIVA CON MÚLTIPLES DETECTORES
+# PARTE 5 – IA IMPREDECIBLE Y ADAPTATIVA
 # =============================================================================
 
 class JugadorIA:
@@ -292,169 +203,24 @@ class JugadorIA:
             self.modelo = cargar_modelo(ruta_modelo)
             self.columnas = self.modelo.feature_names_in_
         except:
-            print("No se encontró modelo. Jugando aleatorio.")
+            print("No se encontró modelo. Jugando semi-aleatorio.")
             self.modelo = None
             self.columnas = None
 
         self.historial_oponente = deque(maxlen=50)
-        self.historial_ia = deque(maxlen=50)
-        self.historial_resultados = deque(maxlen=50)
-        self.historial_ultimos = [0, 0, 0, 0]
+        self.historial_ia = deque(maxlen=20)  # Para evitar auto-patrones
         self.probabilidades_base = [0.33, 0.33, 0.33]
+        self.historial_ultimos = [0, 0, 0, 0]
+        self.ultima_estrategia = None
+        self.contador_estrategia = 0
 
-        self.racha_detectada = None
-        self.jugadas_desde_cambio = 0
-
-        # Variables para patrones de empate
-        self.empates_consecutivos = 0
-        self.ultima_jugada_empate = None
-
-        # NUEVO: Historial de patrones detectados y éxito
-        self.patron_exitoso = None  # Guarda qué patrón funcionó
-        self.confianza_patron = 0.5  # Nivel de confianza en patrones
-
-        # NUEVO: Detector de comportamiento tras victoria/derrota
-        self.ultima_victoria_ia = False
-        self.ultima_derrota_ia = False
-
-    def registrar(self, jugada_oponente, jugada_ia=None):
-        """Registra la jugada del oponente y el resultado"""
+    def registrar(self, jugada_oponente):
+        """Registra la jugada del oponente"""
         self.historial_oponente.append(JUGADA_A_NUM[jugada_oponente])
 
-        if jugada_ia:
-            self.historial_ia.append(JUGADA_A_NUM[jugada_ia])
-
-            # Determinar resultado
-            if jugada_oponente == jugada_ia:
-                resultado = "empate"
-                self.empates_consecutivos += 1
-                self.ultima_jugada_empate = jugada_oponente
-                self.ultima_victoria_ia = False
-                self.ultima_derrota_ia = False
-            elif GANA_A[jugada_ia] == jugada_oponente:
-                resultado = "win"
-                self.ultima_victoria_ia = True
-                self.ultima_derrota_ia = False
-                if self.empates_consecutivos > 0:
-                    self.empates_consecutivos = 0
-                    self.ultima_jugada_empate = None
-            else:
-                resultado = "loss"
-                self.ultima_victoria_ia = False
-                self.ultima_derrota_ia = True
-                if self.empates_consecutivos > 0:
-                    self.empates_consecutivos = 0
-                    self.ultima_jugada_empate = None
-
-            self.historial_resultados.append(resultado)
-
-        self._actualizar_racha(jugada_oponente)
-
-    def _actualizar_racha(self, jugada_oponente):
-        """Detecta si el oponente está en racha"""
-        if len(self.historial_oponente) < 2:
-            return
-
-        if self.historial_oponente[-1] == self.historial_oponente[-2]:
-            if self.racha_detectada and self.racha_detectada[0] == jugada_oponente:
-                self.racha_detectada = (jugada_oponente, self.racha_detectada[1] + 1)
-            else:
-                self.racha_detectada = (jugada_oponente, 2)
-            self.jugadas_desde_cambio = 0
-        else:
-            self.racha_detectada = None
-            self.jugadas_desde_cambio += 1
-
-    def _detectar_patron_empates(self):
-        """Detecta patrón tras empates consecutivos"""
-        if self.empates_consecutivos >= 2 and self.ultima_jugada_empate:
-            return PIERDE_CONTRA[self.ultima_jugada_empate]
-
-        if self.empates_consecutivos == 1 and self.ultima_jugada_empate:
-            if np.random.random() < 0.4:
-                return self.ultima_jugada_empate
-
-        return None
-
-    def _detectar_patron_tras_resultado(self):
-        """NUEVO: Detecta cambios de comportamiento tras ganar/perder"""
-        if len(self.historial_oponente) < 3:
-            return None
-
-        # Patrón: tras perder, el oponente tiende a cambiar a lo que HABRÍA ganado
-        if self.ultima_victoria_ia and len(self.historial_oponente) >= 2:
-            jugada_perdedora = NUM_A_JUGADA[self.historial_oponente[-1]]
-            # Predice que jugará lo que le habría ganado a la IA
-            if len(self.historial_ia) >= 1:
-                jugada_ia_anterior = NUM_A_JUGADA[self.historial_ia[-1]]
-                # El oponente puede jugar lo que gana a lo que jugó la IA
-                return PIERDE_CONTRA[jugada_ia_anterior]
-
-        # Patrón: tras ganar, a veces repite
-        if self.ultima_derrota_ia and len(self.historial_oponente) >= 1:
-            if np.random.random() < 0.35:
-                return NUM_A_JUGADA[self.historial_oponente[-1]]
-
-        return None
-
-    def _detectar_ciclo_rps(self):
-        """NUEVO: Detecta si el oponente está jugando el ciclo r→p→s"""
-        if len(self.historial_oponente) < 3:
-            return None
-
-        ultimas_3 = [self.historial_oponente[-3], self.historial_oponente[-2], self.historial_oponente[-1]]
-
-        # Ciclo ascendente: r(0) → p(1) → s(2)
-        if ultimas_3 == [0, 1, 2]:
-            return "r"  # Predice que volverá a r
-
-        # Ciclo parcial detectado
-        if len(self.historial_oponente) >= 2:
-            if self.historial_oponente[-2] == 0 and self.historial_oponente[-1] == 1:
-                if np.random.random() < 0.6:
-                    return "s"  # Probablemente jugará s
-            elif self.historial_oponente[-2] == 1 and self.historial_oponente[-1] == 2:
-                if np.random.random() < 0.6:
-                    return "r"  # Probablemente jugará r
-
-        return None
-
-    def _detectar_patron_simple(self):
-        """Detecta patrones simples de alternancia"""
-        if len(self.historial_oponente) < 4:
-            return None
-
-        # Patrón AB-AB
-        if (self.historial_oponente[-1] == self.historial_oponente[-3] and
-                self.historial_oponente[-2] == self.historial_oponente[-4] and
-                self.historial_oponente[-1] != self.historial_oponente[-2]):
-            return NUM_A_JUGADA[self.historial_oponente[-3]]
-
-        # Patrón ABC-ABC
-        if len(self.historial_oponente) >= 6:
-            if (self.historial_oponente[-1] == self.historial_oponente[-4] and
-                    self.historial_oponente[-2] == self.historial_oponente[-5] and
-                    self.historial_oponente[-3] == self.historial_oponente[-6]):
-                return NUM_A_JUGADA[self.historial_oponente[-3]]
-
-        return None
-
-    def _detectar_sesgo_frecuencia(self):
-        """NUEVO: Detecta si el oponente tiene sesgo hacia alguna jugada"""
-        if len(self.historial_oponente) < 10:
-            return None
-
-        recientes = list(self.historial_oponente)[-10:]
-        counter = Counter(recientes)
-
-        # Si una jugada aparece 6+ veces en las últimas 10
-        for jugada, count in counter.items():
-            if count >= 6:
-                # Predice que seguirá con esa tendencia
-                if np.random.random() < 0.65:
-                    return NUM_A_JUGADA[jugada]
-
-        return None
+    def registrar_jugada_ia(self, jugada_ia):
+        """Registra la propia jugada de la IA para evitar patrones"""
+        self.historial_ia.append(JUGADA_A_NUM[jugada_ia])
 
     def obtener_features(self):
         historial = np.array(list(self.historial_oponente))
@@ -467,13 +233,8 @@ class JugadorIA:
         freq_p = np.mean(historial == 1)
         freq_s = np.mean(historial == 2)
 
-        recientes = historial[-10:] if n >= 10 else historial
-        freq_r_recent = np.mean(recientes == 0)
-        freq_p_recent = np.mean(recientes == 1)
-        freq_s_recent = np.mean(recientes == 2)
-
         lags = []
-        for i in range(1, 8):
+        for i in range(1, 6):
             if i <= n:
                 lags.append(historial[-i])
             else:
@@ -481,65 +242,24 @@ class JugadorIA:
 
         ultimos = self.historial_ultimos
 
-        longitud_racha, jugada_racha = detectar_racha_actual(historial.tolist(), ventana=3)
-
         entropia_total = calcular_entropia(historial.tolist())
-        entropia_reciente = calcular_entropia(recientes.tolist())
-
-        if n >= 10:
-            ultimas_5 = historial[-5:]
-            previas_5 = historial[-10:-5]
-            tend_r = np.mean(ultimas_5 == 0) - np.mean(previas_5 == 0)
-            tend_p = np.mean(ultimas_5 == 1) - np.mean(previas_5 == 1)
-            tend_s = np.mean(ultimas_5 == 2) - np.mean(previas_5 == 2)
-        else:
-            tend_r = tend_p = tend_s = 0
-
-        alterna_rp = int(n >= 2 and (
-                (historial[-1] == 0 and historial[-2] == 1) or
-                (historial[-1] == 1 and historial[-2] == 0)
-        ))
-        alterna_rs = int(n >= 2 and (
-                (historial[-1] == 0 and historial[-2] == 2) or
-                (historial[-1] == 2 and historial[-2] == 0)
-        ))
-        alterna_ps = int(n >= 2 and (
-                (historial[-1] == 1 and historial[-2] == 2) or
-                (historial[-1] == 2 and historial[-2] == 1)
-        ))
-
-        diversidad = len(set(recientes))
-
-        desv_r = abs(freq_r_recent - 0.333)
-        desv_p = abs(freq_p_recent - 0.333)
-        desv_s = abs(freq_s_recent - 0.333)
-
-        diff_r = freq_r_recent - freq_r
-        diff_p = freq_p_recent - freq_p
-        diff_s = freq_s_recent - freq_s
+        entropia_reciente = calcular_entropia(historial[-10:].tolist()) if n >= 10 else entropia_total
 
         features = [
             self.probabilidades_base[0], self.probabilidades_base[1], self.probabilidades_base[2],
             freq_r, freq_p, freq_s,
-            freq_r_recent, freq_p_recent, freq_s_recent,
             *lags,
             *ultimos,
-            longitud_racha, jugada_racha,
-            entropia_total, entropia_reciente,
-            tend_r, tend_p, tend_s,
-            alterna_rp, alterna_rs, alterna_ps,
-            diversidad,
-            desv_r, desv_p, desv_s,
-            diff_r, diff_p, diff_s
+            entropia_total, entropia_reciente
         ]
 
         return np.array(features)
 
-    def predecir(self):
+    def predecir_proxima_jugada(self):
+        """Predice la PRÓXIMA jugada del oponente usando ML"""
         if self.modelo is None:
             return np.random.choice(["r", "p", "s"])
 
-        import pandas as pd
         X = pd.DataFrame([self.obtener_features()], columns=self.columnas)
 
         try:
@@ -553,10 +273,12 @@ class JugadorIA:
                         probs_full[clase] = probs[i]
                     probs = probs_full
 
-                noise = np.random.random(3) * 0.02
-                probs = probs + noise
+                # Añadir algo de ruido para evitar ser predecible
+                ruido = np.random.dirichlet([0.3, 0.3, 0.3]) * 0.15
+                probs = probs * 0.85 + ruido
                 probs = probs / probs.sum()
-                pred = np.argmax(probs)
+
+                pred = np.random.choice([0, 1, 2], p=probs)
             else:
                 pred = self.modelo.predict(X)[0]
         except Exception as e:
@@ -564,69 +286,118 @@ class JugadorIA:
 
         return NUM_A_JUGADA[pred]
 
+    def hay_patron_ia(self, jugada_propuesta):
+        """Detecta si la IA está cayendo en un patrón"""
+        if len(self.historial_ia) < 4:
+            return False
+
+        ultimas_4_ia = list(self.historial_ia)[-4:]
+        jugada_num = JUGADA_A_NUM[jugada_propuesta]
+
+        # Detectar patrón de "doble-doble" (r,r,p,p,s,s)
+        if len(ultimas_4_ia) >= 4:
+            if (ultimas_4_ia[-1] == ultimas_4_ia[-2] and
+                    ultimas_4_ia[-3] == ultimas_4_ia[-4] and
+                    ultimas_4_ia[-1] != ultimas_4_ia[-3]):
+                # Estamos en un patrón doble-doble
+                return True
+
+        # Detectar si estamos repitiendo demasiado la misma jugada
+        ultimas_3_ia = list(self.historial_ia)[-3:]
+        if len(ultimas_3_ia) >= 3:
+            counter = Counter(ultimas_3_ia)
+            if counter.most_common(1)[0][1] >= 3:
+                return True
+
+        return False
+
     def decidir_jugada(self):
         """
-        Estrategia ULTRA-ADAPTATIVA con múltiples detectores:
-        0. Detectar sesgo de frecuencia (65%)
-        1. Detectar patrón tras empates (90%)
-        2. Detectar comportamiento tras victoria/derrota (80%)
-        3. Detectar ciclos r→p→s (60%)
-        4. Detectar rachas largas (90%+)
-        5. Detectar patrones de alternancia (65%)
-        6. Predicción del modelo (70%)
-        7. Variación aleatoria (30%)
+        ESTRATEGIA ADAPTATIVA E IMPREDECIBLE:
+
+        1. Detecta patrones del oponente con confianza variable
+        2. Usa ML con probabilidades (no determinista)
+        3. Evita caer en patrones propios
+        4. Mezcla estrategias de forma aleatoria
         """
+        n = len(self.historial_oponente)
 
-        # ===== NIVEL 0: SESGO DE FRECUENCIA =====
-        sesgo = self._detectar_sesgo_frecuencia()
-        if sesgo and np.random.random() < 0.65:
-            return PIERDE_CONTRA[sesgo]
+        # Lista de posibles estrategias con pesos
+        estrategias = []
 
-        # ===== NIVEL 1: PATRÓN DE EMPATES =====
-        patron_empate = self._detectar_patron_empates()
-        if patron_empate and np.random.random() < 0.90:
-            return PIERDE_CONTRA[patron_empate]
+        # === ESTRATEGIA 1: Repetición inmediata (FUERTE) ===
+        if n >= 2 and self.historial_oponente[-1] == self.historial_oponente[-2]:
+            jugada_repetida = NUM_A_JUGADA[self.historial_oponente[-1]]
+            estrategias.append(("repeticion", GANA_A[jugada_repetida], 0.6))
 
-        # ===== NIVEL 2: COMPORTAMIENTO TRAS RESULTADO =====
-        patron_resultado = self._detectar_patron_tras_resultado()
-        if patron_resultado and np.random.random() < 0.80:
-            return PIERDE_CONTRA[patron_resultado]
+        # === ESTRATEGIA 2: Frecuencia en últimas 5 (MODERADA) ===
+        if n >= 5:
+            ultimas_5 = list(self.historial_oponente)[-5:]
+            counter = Counter(ultimas_5)
+            jugada_mas_comun, count = counter.most_common(1)[0]
 
-        # ===== NIVEL 3: CICLO RPS =====
-        ciclo = self._detectar_ciclo_rps()
-        if ciclo and np.random.random() < 0.60:
-            return PIERDE_CONTRA[ciclo]
+            if count >= 3:
+                estrategias.append(("frecuencia_5", GANA_A[NUM_A_JUGADA[jugada_mas_comun]], 0.5))
 
-        # ===== NIVEL 4: CONTRAATAQUE A RACHAS =====
-        if self.racha_detectada and self.racha_detectada[1] >= 2:
-            jugada_racha = self.racha_detectada[0]
-            longitud = self.racha_detectada[1]
+        # === ESTRATEGIA 3: Tendencia en últimas 3 (SUAVE) ===
+        if n >= 3:
+            ultimas_3 = list(self.historial_oponente)[-3:]
+            counter_3 = Counter(ultimas_3)
 
-            if longitud >= 5:
-                probabilidad = 0.95
-            elif longitud >= 3:
-                probabilidad = 0.88
-            else:
-                probabilidad = 0.80
+            for jugada, count in counter_3.items():
+                if count >= 2:
+                    estrategias.append(("tendencia_3", GANA_A[NUM_A_JUGADA[jugada]], 0.35))
+                    break
 
-            if np.random.random() < probabilidad:
-                return PIERDE_CONTRA[jugada_racha]
+        # === ESTRATEGIA 4: Predicción ML (SIEMPRE DISPONIBLE) ===
+        pred_ml = self.predecir_proxima_jugada()
+        estrategias.append(("ml", GANA_A[pred_ml], 0.4))
 
-        # ===== NIVEL 5: PATRONES DE ALTERNANCIA =====
-        patron = self._detectar_patron_simple()
-        if patron and np.random.random() < 0.65:
-            return PIERDE_CONTRA[patron]
+        # === ESTRATEGIA 5: Semi-aleatorio (ANTI-PATRON) ===
+        if n >= 10:
+            historial = np.array(list(self.historial_oponente))
+            freq_r = np.mean(historial == 0)
+            freq_p = np.mean(historial == 1)
+            freq_s = np.mean(historial == 2)
 
-        # ===== NIVEL 6: PREDICCIÓN DEL MODELO =====
-        pred = self.predecir()
+            # Invertir frecuencias: jugar contra lo que MENOS juega
+            freq_inversa = [1 - freq_r, 1 - freq_p, 1 - freq_s]
+            freq_inversa = np.array(freq_inversa) / sum(freq_inversa)
 
-        if np.random.random() < 0.70:
-            return PIERDE_CONTRA[pred]
-        else:
-            # Variación estratégica
-            otras = [x for x in ["r", "p", "s"] if x != pred]
-            pred_alternativa = np.random.choice(otras)
-            return PIERDE_CONTRA[pred_alternativa]
+            jugada_inversa = np.random.choice(["r", "p", "s"], p=freq_inversa)
+            estrategias.append(("anti_patron", jugada_inversa, 0.25))
+
+        # Seleccionar estrategia usando pesos probabilísticos
+        if estrategias:
+            nombres, jugadas, pesos = zip(*estrategias)
+            pesos = np.array(pesos)
+            pesos = pesos / pesos.sum()
+
+            idx = np.random.choice(len(estrategias), p=pesos)
+            estrategia_elegida, jugada_elegida = nombres[idx], jugadas[idx]
+
+            # Anti-patrón: verificar si la IA está siendo predecible
+            if self.hay_patron_ia(jugada_elegida):
+                # Forzar variación
+                todas_jugadas = ["r", "p", "s"]
+                if len(self.historial_ia) >= 2:
+                    # Evitar las últimas 2 jugadas
+                    evitar = [NUM_A_JUGADA[self.historial_ia[-1]],
+                              NUM_A_JUGADA[self.historial_ia[-2]]]
+                    opciones = [j for j in todas_jugadas if j not in evitar]
+                    if opciones:
+                        jugada_elegida = np.random.choice(opciones)
+
+            # Registrar para tracking
+            self.ultima_estrategia = estrategia_elegida
+            self.registrar_jugada_ia(jugada_elegida)
+
+            return jugada_elegida
+
+        # Fallback: aleatorio puro
+        jugada = np.random.choice(["r", "p", "s"])
+        self.registrar_jugada_ia(jugada)
+        return jugada
 
 
 # =============================================================================
@@ -640,26 +411,25 @@ def main():
     print("Preparando datos...")
     df = preparar_datos(df)
 
-    print("Creando features mejoradas...")
+    print("Creando features...")
     df = crear_features(df)
 
     X, y = seleccionar_features(df)
 
     print(f"\nDataset final: {X.shape[0]} muestras, {X.shape[1]} features")
-    print("\nEntrenando modelo ULTRA mejorado…")
+    print("\nEntrenando modelo ADAPTATIVO E IMPREDECIBLE…")
     modelo = entrenar_modelo(X, y)
 
     guardar_modelo(modelo)
-    print("\n✓ Entrenamiento finalizado con éxito!")
-    print("\n🎯 ESTRATEGIA ULTRA-ADAPTATIVA ACTIVADA:")
-    print("  0. DETECTOR DE SESGO: Frecuencia alta en últimas 10 jugadas (65%)")
-    print("  1. DETECTOR DE EMPATES: Tras 2+ empates consecutivos (90%)")
-    print("  2. DETECTOR POST-RESULTADO: Comportamiento tras ganar/perder (80%)")
-    print("  3. DETECTOR DE CICLOS: Secuencia r→p→s (60%)")
-    print("  4. CONTRAATAQUE A RACHAS: 2+ repeticiones (80-95%)")
-    print("  5. PATRONES DE ALTERNANCIA: AB-AB, ABC-ABC (65%)")
-    print("  6. PREDICCIÓN ML: Modelo ensemble mejorado (70%)")
-    print("  7. VARIACIÓN ESTRATÉGICA: Para impredecibilidad (30%)")
+    print("\n✓ Entrenamiento finalizado!")
+    print("\n🎯 ESTRATEGIA ADAPTATIVA:")
+    print("  🎲 Mezcla estrategias con pesos probabilísticos")
+    print("  🔍 Detecta patrones del oponente")
+    print("  🛡️ Evita caer en patrones propios")
+    print("  🧠 Usa ML con ruido aleatorio")
+    print("  ⚡ Cambia dinámicamente de estrategia")
+    print("\n⚠️ IMPORTANTE: Ahora es IMPREDECIBLE")
+
 
 if __name__ == "__main__":
     main()
