@@ -422,13 +422,12 @@ def main():
 
     guardar_modelo(modelo)
     print("\n✓ Entrenamiento finalizado!")
-    print("\n🎯 ESTRATEGIA ADAPTATIVA:")
-    print("  🎲 Mezcla estrategias con pesos probabilísticos")
-    print("  🔍 Detecta patrones del oponente")
-    print("  🛡️ Evita caer en patrones propios")
-    print("  🧠 Usa ML con ruido aleatorio")
-    print("  ⚡ Cambia dinámicamente de estrategia")
-    print("\n⚠️ IMPORTANTE: Ahora es IMPREDECIBLE")
+    print("\n ESTRATEGIA ADAPTATIVA:")
+    print("  Mezcla estrategias con pesos probabilísticos")
+    print("  Detecta patrones del oponente")
+    print("  Evita caer en patrones propios")
+    print("  Usa ML con ruido aleatorio")
+    print("  Cambia dinámicamente de estrategia")
 
 
 if __name__ == "__main__":
